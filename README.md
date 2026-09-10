@@ -122,7 +122,7 @@ The script uses the following services for data retrieval:
 * [Shodan](https://www.shodan.io/)
 * [NIST National Vulnerability Database](https://nvd.nist.gov/)
 * [Ipapi.is](https://ipapi.is/)
-* [RestCountries](https://restcountries.com/)
+* [Countries.dev](https://countries.dev/)
 * [IPdeny](https://www.ipdeny.com/)
 
 It also provides hyperlinks (in [server](#running-lookups-from-the-browser) mode) to the following external services when appropriate:

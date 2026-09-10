@@ -12,7 +12,7 @@
 # │ (Launch the script without parameters or visit the project's homepage for usage info)│
 # ╰──────────────────────────────────────────────────────────────────────────────────────╯
 
-ASN_VERSION="0.81.1"
+ASN_VERSION="0.82.0"
 
 # ╭──────────────────╮
 # │ Helper functions │
@@ -2828,7 +2828,11 @@ IPShodanLookup(){
 		if [ -n "$shodan_cve_count" ] && [ "$shodan_cve_count" != "0" ]; then
 			[[ "$shodan_cve_count" != "1" ]] && vulntext="VULNERABILITIES" || vulntext="VULNERABILITY"
 			ip_shodan_cve_data+=" ${redbg} $shodan_cve_count $vulntext FOUND ${default} (check "
-			[[ "$IS_ASN_CHILD" = true ]] && ip_shodan_cve_data+="<a href=\"https://internetdb.shodan.io/$1\" target=\"_blank\" \">Shodan</a>)" || ip_shodan_cve_data+="https://internetdb.shodan.io/$1)"
+			if [ "$IS_ASN_CHILD" = true ]; then
+				ip_shodan_cve_data+="<a href=\"https://www.shodan.io/host/$1\" target=\"_blank\" \">Shodan</a>)"
+			else
+				ip_shodan_cve_data+="${blue}https://www.shodan.io/host/$1${default} or run ${blue}asn -s $1${default})"
+			fi
 		fi
 	fi
 
@@ -3828,7 +3832,7 @@ HandleNcatClientConnection() {
 				# send HTTP 200 OK response and display HTML headers
 				echo -e "${http_ok}${html_header}"
 			fi
-			countryname=$(docurl -m2 -s "https://restcountries.com/v3.1/alpha/$server_country" | jq -r '.[].name.common')
+			countryname=$(docurl -m2 -s "https://countries.dev/alpha/$server_country" | jq -r '.name')
 			if [ -n "$countryname" ] && [ "$countryname" != "null" ]; then
 				title_tag="title='$countryname'"
 			else
@@ -3910,7 +3914,7 @@ HandleNcatClientConnection() {
 							# CloudflareJS: https://cdnjs.cloudflare.com/ajax/libs/flag-icon-css/3.5.0/flags/4x3/$cc.svg
 							cc=$(echo -e "$outputline" | awk '{print $NF}')
 							# lookup full country name
-							countryname=$(docurl -m2 -s "https://restcountries.com/v3.1/alpha/$cc" | jq -r '.[].name.common')
+							countryname=$(docurl -m2 -s "https://countries.dev/alpha/$cc" | jq -r '.name')
 							if [ -n "$countryname" ] && [ "$countryname" != "null" ]; then
 								title_tag="title='$countryname'"
 							else
@@ -4166,7 +4170,7 @@ declare -A PEERINGDB_CACHED_DATASETS
 declare -A PEERINGDB_CACHED_IXP_DATA
 declare -A CAIDARANK_CACHED_AS_DATA
 # to build the CC->CountryName mapping cache:
-# COUNTRY_MAP_CACHE=$(docurl -m4 -s "https://restcountries.com/v3.1/all?fields=name,cca2" | jq -c 'map({(.cca2): .name.common}) | add | to_entries | sort_by(.key) | from_entries')
+# COUNTRY_MAP_CACHE=$(docurl -m4 -s "https://countries.dev/countries?fields=name,alpha2Code" | jq -c 'map({(.alpha2Code): .name}) | add | to_entries | sort_by(.key) | from_entries'
 COUNTRY_MAP_CACHE='{"AD":"Andorra","AE":"United Arab Emirates","AF":"Afghanistan","AG":"Antigua and Barbuda","AI":"Anguilla","AL":"Albania","AM":"Armenia","AO":"Angola",
 "AQ":"Antarctica","AR":"Argentina","AS":"American Samoa","AT":"Austria","AU":"Australia","AW":"Aruba","AX":"Åland Islands","AZ":"Azerbaijan","BA":"Bosnia and Herzegovina",
 "BB":"Barbados","BD":"Bangladesh","BE":"Belgium","BF":"Burkina Faso","BG":"Bulgaria","BH":"Bahrain","BI":"Burundi","BJ":"Benin","BL":"Saint Barthélemy","BM":"Bermuda",
@@ -4493,33 +4497,37 @@ if [ "$COUNTRY_BLOCK_MODE" = true ]; then
 	# check if user passed a country code (.xx)
 	if [ "${userinput::1}" == "." ]; then
 		cc=$(echo "$userinput" | cut -d '.' -f 2-)
-		restcountries_output=$(docurl -m10 -s "https://restcountries.com/v3.1/alpha/$cc")
+		country_output=$(docurl -m10 -s --fail "https://countries.dev/alpha/$cc")
 	else
 		# Urlencode the spaces in user's input
 		countrystring=${userinput// /%20}
 		# Look up the country code
-		restcountries_output=$(docurl -m10 -s "https://restcountries.com/v3.1/name/${countrystring}")
+		country_output=$(docurl -m10 -s --fail "https://countries.dev/name/${countrystring}")
+		if [ -n "$country_output" ]; then
+			matches=$(jq -r '. | length' <<<"$country_output")
+			if [ "$matches" -gt 1 ]; then
+				[[ "$JSON_OUTPUT" = true ]] && PrintErrorAndExit "Multiple countries found, please specify a valid country code"
+				echo -e "\n${yellow}Multiple countries found, please specify a valid country code:${default}\n"
+				for (( i=0; i<"$matches"; i++ )); do
+					countryname=$(jq -r ".[$i] | (.name)" <<<"$country_output")
+					cc=$(jq -r ".[$i] | (.alpha2Code)" <<<"$country_output")
+					printf "%-55s : ${green}%s${default}\n" "$countryname" "$cc"
+				done
+				echo ""
+				tput sgr0
+				exit 0
+			else
+				country_output=$(jq -r '.[]' <<<"$country_output")
+			fi
+		fi
 	fi
-	have_results=$(jq 'if type=="array" then true else false end' <<<"$restcountries_output")
-	[[ "$have_results" = false ]] && PrintErrorAndExit "No countries matching '$userinput'"
-	matches=$(jq -r '. | length' <<<"$restcountries_output")
-	if [ "$matches" -gt 1 ]; then
-		[[ "$JSON_OUTPUT" = true ]] && PrintErrorAndExit "Multiple countries found, please specify a valid country code"
-		echo -e "\n${yellow}Multiple countries found, please specify a valid country code:${default}\n"
-		for (( i=0; i<"$matches"; i++ )); do
-			formalname=$(jq -r ".[$i] | (.name.official)" <<<"$restcountries_output")
-			commonname=$(jq -r ".[$i] | (.name.common)" <<<"$restcountries_output")
-			cc=$(jq -r ".[$i] | (.cca2)" <<<"$restcountries_output")
-			printf "%-55s : ${green}%s${default} (aka: %s)\n" "$formalname" "$cc" "$commonname"
-		done
-		echo ""
-		tput sgr0
-		exit 0
+	if [ -z "$country_output" ]; then
+		PrintErrorAndExit "No countries matching '$userinput'"
 	fi
-	cc=$(jq -r 'select(.[].cca2 != null) | .[].cca2' <<<"$restcountries_output" | tr '[:upper:]' '[:lower:]')
+	cc=$(jq -r 'select(.alpha2Code != null) | .alpha2Code' <<<"$country_output" | tr '[:upper:]' '[:lower:]')
 	[[ -z "$cc" ]] && PrintErrorAndExit "No country matching '$userinput' found"
-	countryname=$(jq -r '.[].name.common' <<<"$restcountries_output")
-	population=$(jq -r '.[].population' <<<"$restcountries_output")
+	countryname=$(jq -r '.name' <<<"$country_output")
+	population=$(jq -r '.population' <<<"$country_output")
 	country_ipv4_blocks=$(docurl -m10 -s "https://www.ipdeny.com/ipblocks/data/countries/$cc.zone")
 	country_ipv6_blocks=$(docurl -m10 -s "https://www.ipdeny.com/ipv6/ipaddresses/blocks/$cc.zone")
 	country_ipv4_blocks_count=$(wc -l <<<"$country_ipv4_blocks")
