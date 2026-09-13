@@ -237,7 +237,7 @@ To run the script without installing it locally, you have the following options:
 
 * **Docker** _(thanks [Gianni Stubbe](https://github.com/33Fraise33), [anarcat](https://github.com/anarcat), [Francesco Colista](https://github.com/fcolista), [arbal](https://github.com/arbal))_
 
-  _Note: the Docker image runs by default in server mode, if no parameters are given. This is equivalent to running the tool as `asn -l ::` (run server, bind to all interfaces - this is necessary to expose the server port to the host machine). You can run the server with different [options](#syntax) by explicitly passing `-l [options]`. It's also possible to pass an [IpQualityScore](#ip-reputation-api-token-ipqualityscore), [ipinfo.io](#geolocation-api-token-ipinfoio) and/or [Cloudflare](#bgp-hijack-and-route-leak-incidents-cloudflare-radar) API token (both client and server runs) by setting, respectively, the `IQS_TOKEN`, `IPINFO_TOKEN` and `CLOUDFLARE_TOKEN` environment variables (examples below) in the container._
+  _Note: the Docker image runs by default in server mode, if no parameters are given. This is equivalent to running the tool as `asn -l ::` (run server, bind to all interfaces - this is necessary to expose the server port to the host machine). You can run the server with different [options](#syntax) by explicitly passing `-l [options]`. It's also possible to pass an [IpQualityScore](#ip-reputation-api-token-ipqualityscore), [ipinfo.io](#geolocation-api-token-ipinfoio), [Cloudflare](#bgp-hijack-and-route-leak-incidents-cloudflare-radar) and/or [ffraud.com](#ip-reputation-api-token-ffraudcom) API token (both client and server runs) by setting, respectively, the `IQS_TOKEN`, `IPINFO_TOKEN`, `CLOUDFLARE_TOKEN` and `FFRAUD_TOKEN` environment variables (examples below) in the container._
 
   Usage examples:
   - Start server: `docker run -it -p 49200:49200 nitefood/asn`
@@ -510,6 +510,34 @@ Either way, `asn` will pick up your token on the next run (no need to restart th
 
 > ***Note:***
 > *IPQualityScore is not queried by default for every target, but only for targets that get flagged as BAD by StopForumSpam. It's possible to override this behavior (and force IQS lookup for every target) by setting the `IQS_ALWAYS_QUERY` parameter to `true` in the [preferences file](#preferences-file-homeasnrc). It is also possible to specify [custom query settings](https://www.ipqualityscore.com/documentation/proxy-detection/overview) through the `IQS_CUSTOM_SETTINGS` parameter.*
+
+</p></details>
+
+### IP reputation API token (ffraud.com)
+
+<details><summary><b>ffraud.com API token details</b></summary><p>
+
+As an alternative to IPQualityScore, second-level in-depth threat analysis can be performed using the [ffraud.com](https://ffraud.com/) IQS-compatible API. In addition to the standard threat score and classification badges, ffraud.com lookups will also report **threat tags** (e.g. `C2 SERVER`, `BOTNET NODE`, `SSH BRUTE FORCE`), a **risk level** and the **subnet abuse ratio** for the target IP.
+
+Once obtained, the api token should be written to one of the following files (parsed in that order):
+
+`$HOME/.asn/ffraud_token` or
+`/etc/asn/ffraud_token`
+
+The `/etc`-based file should be used when running asn in **server mode**. The `$HOME`-based file takes precedence if both files exist, and is ideal for **user mode** (that is, running `asn` interactively from the command line).
+
+In order to do so, you can use the following command:
+
+***User mode:***
+
+`TOKEN="<your_token_here>"; mkdir "$HOME/.asn/" && echo "$TOKEN" > "$HOME/.asn/ffraud_token" && chmod -R 600 "$HOME/.asn/*"`
+
+***Server mode:***
+
+`TOKEN="<your_token_here>"; mkdir "/etc/asn/" && echo "$TOKEN" > "/etc/asn/ffraud_token" && chmod -R 700 "/etc/asn/" && chown -R nobody /etc/asn/`
+
+> ***Note:***
+> *If both an ffraud.com and an IPQualityScore token are configured, IPQualityScore takes precedence. Like IQS, ffraud.com is only queried for targets flagged as BAD by StopForumSpam, unless `IQS_ALWAYS_QUERY` is set to `true` in the [preferences file](#preferences-file-homeasnrc).*
 
 </p></details>
 

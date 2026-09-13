@@ -25,6 +25,7 @@ docurl(){
 		[ -n "$IPINFO_TOKEN" ] && sed_args+=("-e" "s/$IPINFO_TOKEN/######/g")
 		[ -n "$IQS_TOKEN" ] && sed_args+=("-e" "s/$IQS_TOKEN/######/g")
 		[ -n "$CLOUDFLARE_TOKEN" ] && sed_args+=("-e" "s/$CLOUDFLARE_TOKEN/######/g")
+		[ -n "$FFRAUD_TOKEN" ] && sed_args+=("-e" "s/$FFRAUD_TOKEN/######/g")
 		if [ "${#sed_args[@]}" -gt 0 ]; then
 			# mask API tokens in debug output to prevent accidental exposure
 			parm=$(sed "${sed_args[@]}" <<<"$@")
@@ -2208,7 +2209,8 @@ PrintJsonOutput(){
 	json_to_print+="\"api_tokens\":{"
 	json_to_print+="\"ipqualityscore\":$json_IQS_TOKEN,"
 	json_to_print+="\"ipinfo\":$json_IPINFO_TOKEN,"
-	json_to_print+="\"cloudflare\":$json_CLOUDFLARE_TOKEN"
+	json_to_print+="\"cloudflare\":$json_CLOUDFLARE_TOKEN,"
+	json_to_print+="\"ffraud\":$json_FFRAUD_TOKEN"
 	json_to_print+="},"
 	json_to_print+="\"result_count\":$json_resultcount,"
 	if [ "$RECON_MODE" = true ] || [ "$BGP_UPSTREAM_MODE" = true ]; then
@@ -2666,6 +2668,7 @@ IPGeoRepLookup(){
 	# Reputation lookup (stopforumspam.org), noise classification (greynoise.io) and threat analysis (ipqualityscore.com)
 	ip_rep_data="${green}✓ NONE${default}"
 	json_rep="none"
+	iqs_output=""
 	json_iqs_threat_score=""
 	json_iqs_threat_tags=""
 	is_blacklisted=$(docurl -m4 -s "https://api.stopforumspam.org/api?json&ip=$1" | jq -r '.ip.appears')
@@ -2674,11 +2677,17 @@ IPGeoRepLookup(){
 		json_rep="bad"
 		ip_rep_data="${red}❌ BAD (on stopforumspam.org)${default}"
 	fi
-	if [ -n "$IQS_TOKEN" ]; then
+	if [ -n "$FFRAUD_TOKEN" ] || [ -n "$IQS_TOKEN" ]; then
 		if [ "$is_blacklisted" = "1" ] || [ "$IQS_ALWAYS_QUERY" = true ]; then
-			# Lookup detailed reputation data on IPQualityScore
-			iqs_query_url="https://ipqualityscore.com/api/json/ip/$IQS_TOKEN/$1"
-			[[ -n "$IQS_CUSTOM_SETTINGS" ]] && iqs_query_url+="?$IQS_CUSTOM_SETTINGS"
+			# Lookup detailed reputation data on IPQualityScore (takes precedence) or ffraud.com (IQS-compatible API)
+			if [ -n "$IQS_TOKEN" ]; then
+				iqs_provider="IpQualityScore"
+				iqs_query_url="https://ipqualityscore.com/api/json/ip/$IQS_TOKEN/$1"
+				[[ -n "$IQS_CUSTOM_SETTINGS" ]] && iqs_query_url+="?$IQS_CUSTOM_SETTINGS"
+			else
+				iqs_provider="ffraud.com"
+				iqs_query_url="https://api.ffraud.com/compat/ipqs/json/$FFRAUD_TOKEN/$1"
+			fi
 			iqs_output=$(docurl -m4 -s "$iqs_query_url")
 			iqs_success=$(jq -r '.success' <<<"$iqs_output")
 			if [ "$iqs_success" = true ]; then
@@ -2714,9 +2723,21 @@ IPGeoRepLookup(){
 				[[ "$iqs_vpn" = true ]] && ip_rep_data+=" ${redbg} VPN ${default}"; json_iqs_threat_tags+=",\"is_vpn\": true"
 				[[ "$iqs_tor" = true ]] && ip_rep_data+=" ${redbg} TOR EXIT NODE ${default}"; json_iqs_threat_tags+=",\"is_tor\": true"
 				[[ "$iqs_crawler" = true ]] && ip_rep_data+=" ${redbg} CRAWLER ${default}"; json_iqs_threat_tags+=",\"is_crawler\": true"
+				# ffraud.com extras (absent from genuine IPQualityScore responses)
+				ffraud_risk=$(jq -r '.ffraud_extras.risk // empty' <<<"$iqs_output")
+				[[ -n "$ffraud_risk" ]] && json_iqs_threat_tags+=",\"risk\":\"$ffraud_risk\""
+				ffraud_subnet_abuse=$(jq -r '.ffraud_extras.subnet_abuse_ratio // empty' <<<"$iqs_output")
+				[[ -n "$ffraud_subnet_abuse" ]] && json_iqs_threat_tags+=",\"subnet_abuse_ratio\":$ffraud_subnet_abuse"
+				ffraud_tags=$(jq -c 'select (.ffraud_extras.threat_tags != null) | .ffraud_extras.threat_tags' <<<"$iqs_output")
+				if [ -n "$ffraud_tags" ]; then
+					json_iqs_threat_tags+=",\"threat_tags\":$ffraud_tags"
+					for ffraud_tag in $(jq -r '.[]' <<<"$ffraud_tags"); do
+						ip_rep_data+=" ${redbg} $(tr '[:lower:]_' '[:upper:] ' <<<"$ffraud_tag") ${default}"
+					done
+				fi
 			else
 				iqs_errmsg=$(jq -r '.message' <<<"$iqs_output")
-				ip_rep_data+=" ${redbg} ERR ${default} (IpQualityScore API said: $iqs_errmsg)"
+				ip_rep_data+=" ${redbg} ERR ${default} ($iqs_provider API said: $iqs_errmsg)"
 			fi
 		fi
 	fi
@@ -2741,14 +2762,19 @@ IPGeoRepLookup(){
 			gn_name="as \"$gn_name\" ${default}"
 		fi
 		if [ "$gn_riot" = "true" ] || [ "$gn_classification" = "benign" ]; then
-			# GreyNoise known-good
-			ip_rep_data="${green}✓${default} ${greenbg} KNOWN GOOD $gn_name"
+			# GreyNoise known-good (append to second-level IQS/ffraud results if present, otherwise overwrite)
+			if [ -n "$iqs_output" ]; then
+				ip_rep_data+=" ${greenbg} KNOWN GOOD $gn_name"
+			else
+				ip_rep_data="${green}✓${default} ${greenbg} KNOWN GOOD $gn_name"
+			fi
 			json_rep="good"
 			gn_json_is_knowngood=true
 			[[ "$gn_noisy" = "true" ]] && ip_rep_data+=" ${yellowbg} SEEN SCANNING ${default}"
 		elif [ "$gn_classification" = "malicious" ]; then
 			# GreyNoise known-bad
-			[[ "$is_blacklisted" != "1" ]] && ip_rep_data="${red}❌ BAD${default}" # tag the IP with a bad REP, it wasn't caught by StopForumSpam earlier
+			# tag the IP with a bad REP if it wasn't caught by StopForumSpam or a second-level (IQS/ffraud) lookup earlier
+			[[ "$is_blacklisted" != "1" ]] && [ -z "$iqs_output" ] && ip_rep_data="${red}❌ BAD${default}"
 			ip_rep_data+=" ${redbg} SCANNER $gn_name"
 			json_rep="bad"
 			gn_json_is_knownbad=true
@@ -3077,6 +3103,7 @@ AsnServerListener(){
 	[[ "$json_IQS_TOKEN" = true ]] && API_TOKENS_STATUS="${green}✓ IQS${default}" || API_TOKENS_STATUS="${red}❌ IQS${default}"
 	[[ "$json_IPINFO_TOKEN" = true ]] && API_TOKENS_STATUS+=" • ${green}✓ IPINFO${default}" || API_TOKENS_STATUS+=" • ${red}❌ IPINFO${default}"
 	[[ "$json_CLOUDFLARE_TOKEN" = true ]] && API_TOKENS_STATUS+=" • ${green}✓ CLOUDFLARE${default}" || API_TOKENS_STATUS+=" • ${red}❌ CLOUDFLARE${default}"
+	[[ "$json_FFRAUD_TOKEN" = true ]] && API_TOKENS_STATUS+=" • ${green}✓ FFRAUD${default}" || API_TOKENS_STATUS+=" • ${red}❌ FFRAUD${default}"
 	echo -e "\n- Server ext. IP  : ${blue}${local_wanip}${default}" \
 			"\n- Server Country  : ${blue}${server_country}${default}" \
 			"\n- Server ASN      : ${red}[AS${found_asn}]${default} ${green}$found_asname${default}" \
@@ -3390,6 +3417,7 @@ CheckPrerequisites() {
 	IQS_TOKEN=""		; json_IQS_TOKEN="false"
 	IPINFO_TOKEN=""		; json_IPINFO_TOKEN="false"
 	CLOUDFLARE_TOKEN=""	; json_CLOUDFLARE_TOKEN="false"
+	FFRAUD_TOKEN=""		; json_FFRAUD_TOKEN="false"
 
 	IFS=$'\n'
 	# Read tokens token from possible config files on disk
@@ -3414,9 +3442,16 @@ CheckPrerequisites() {
 			break
 		fi
 	done
+	for asn_config_file in $(tr ':' '\n' <<<"$FFRAUD_TOKEN_FILES"); do
+		if [ -r "$asn_config_file" ]; then
+			FFRAUD_TOKEN=$(tr -d ' \n\r\t' < "$asn_config_file")
+			json_FFRAUD_TOKEN="true"
+			break
+		fi
+	done
 
 	if [ "$JSON_OUTPUT" = false ]; then
-		if 	[ -z "$IQS_TOKEN" ] || [ -z "$IPINFO_TOKEN" ] || [ -z "$CLOUDFLARE_TOKEN" ]; then
+		if 	{ [ -z "$IQS_TOKEN" ] && [ -z "$FFRAUD_TOKEN" ]; } || [ -z "$IPINFO_TOKEN" ] || [ -z "$CLOUDFLARE_TOKEN" ]; then
 			# warn the user about the absence of external API token(s)
 			if [ "$IS_HEADLESS" = true ]; then
 				line="------------------------------------------------------------"
@@ -3434,7 +3469,7 @@ CheckPrerequisites() {
 		fi
 		if [ "$ASN_DEBUG" = true ]; then
 			echo ""
-			for token in "IQS_TOKEN" "IPINFO_TOKEN" "CLOUDFLARE_TOKEN"; do
+			for token in "IQS_TOKEN" "IPINFO_TOKEN" "CLOUDFLARE_TOKEN" "FFRAUD_TOKEN"; do
 				if [ -z "${!token}" ]; then
 					DebugPrint "${dim}${white}$token: ${red}❌ NOT FOUND${default}"
 				else
@@ -4131,11 +4166,13 @@ else
 fi
 
 # External API tokens for ipqualityscore.com (IP reputation & threat analysis lookup),
-# ipinfo.io (IP geolocation lookup) and Cloudflare Radar (BGP hijacks and route leaks historical data)
+# ipinfo.io (IP geolocation lookup), Cloudflare Radar (BGP hijacks and route leaks historical data)
+# and ffraud.com (IQS-compatible IP reputation & threat analysis lookup, used when no IQS token is configured)
 # Files will be parsed in the order they are declared (first path found takes precedence)
 IQS_TOKEN_FILES="$HOME/.asn/iqs_token:/etc/asn/iqs_token"
 IPINFO_TOKEN_FILES="$HOME/.asn/ipinfo_token:/etc/asn/ipinfo_token"
 CLOUDFLARE_TOKEN_FILES="$HOME/.asn/cloudflare_token:/etc/asn/cloudflare_token"
+FFRAUD_TOKEN_FILES="$HOME/.asn/ffraud_token:/etc/asn/ffraud_token"
 
 # SIGINT trapping
 NO_ERROR_ON_INTERRUPT=false

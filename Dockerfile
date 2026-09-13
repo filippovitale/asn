@@ -9,6 +9,7 @@ RUN mkdir -p /etc/asn && \
     '[[ -n "$IQS_TOKEN" ]] 			&& echo "$IQS_TOKEN" > /etc/asn/iqs_token' \
 	'[[ -n "$IPINFO_TOKEN" ]] 		&& echo "$IPINFO_TOKEN" > /etc/asn/ipinfo_token' \
 	'[[ -n "$CLOUDFLARE_TOKEN" ]] 	&& echo "$CLOUDFLARE_TOKEN" > /etc/asn/cloudflare_token' \
+	'[[ -n "$FFRAUD_TOKEN" ]] 		&& echo "$FFRAUD_TOKEN" > /etc/asn/ffraud_token' \
     'exec "$@"' > /entrypoint.sh && \
     chmod +x /entrypoint.sh && \
     apk update && \
