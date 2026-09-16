@@ -761,7 +761,7 @@ IQS_CUSTOM_SETTINGS=""
 ##### *Organization data, IP Reputation, noise classification and IP fingerprinting*
 
 * Organization data is taken from pWhois
-* IP reputation data is taken from StopForumSpam and IpQualityScore
+* IP reputation data is taken from StopForumSpam, IpQualityScore and FFraud.
   > Reputation is also enriched with IP *noise* classification (addresses that have been observed scanning the Internet, and very likely to appear in your logs), taken from [GreyNoise](https://greynoise.io). This will also help identify known-good IPs (e.g. Google networks, CDNs, etc.) from aggressive, known-malicious scanners.
 * IP fingerprinting data is retrieved from Shodan's [InternetDB API](https://internetdb.shodan.io/). Data includes open ports, [software/hardware information](https://en.wikipedia.org/wiki/Common_Platform_Enumeration) and [known vulnerabilities](https://en.wikipedia.org/wiki/Common_Vulnerabilities_and_Exposures) pertaining to the IP address.
 
